@@ -1,4 +1,4 @@
-const CACHE='rabbit-meadow-v12';
+const CACHE='rabbit-meadow-v13';
 const ASSETS=['./','./index.html','./manifest.webmanifest','./icon.svg'];
 
 self.addEventListener('install',event=>{
