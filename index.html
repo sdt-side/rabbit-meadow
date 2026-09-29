@@ -5,313 +5,41 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no" />
 <title>Rabbit Meadow</title>
 <style>
-  html,body{
-    margin:0;
-    height:100%;
-    background:#1f2d20;
-    overflow:hidden;
-    font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
-  }
-  body{
-    display:grid;
-    place-items:center;
-    touch-action:none;
-  }
-  #wrap{
-    position:relative;
-    width:min(100vw,960px);
-    aspect-ratio:16/9;
-    max-height:100vh;
-  }
-  canvas{
-    width:100%;
-    height:100%;
-    image-rendering:pixelated;
-    image-rendering:crisp-edges;
-    background:#7db85b;
-    box-shadow:0 0 0 1px rgba(255,255,255,.08), 0 18px 60px rgba(0,0,0,.35);
-  }
-  #hint{
-    position:absolute;
-    left:12px;
-    top:10px;
-    color:rgba(255,255,255,.75);
-    font-size:12px;
-    letter-spacing:.04em;
-    text-shadow:0 1px 2px rgba(0,0,0,.5);
-    pointer-events:none;
-  }
-  #pad{
-    position:absolute;
-    left:14px;
-    bottom:14px;
-    width:118px;
-    height:118px;
-    display:grid;
-    grid-template-columns:repeat(3,1fr);
-    grid-template-rows:repeat(3,1fr);
-    gap:4px;
-    opacity:.6;
-  }
-  .btn{
-    border:0;
-    border-radius:10px;
-    background:rgba(255,255,255,.18);
-    color:white;
-    font-size:18px;
-    user-select:none;
-    -webkit-user-select:none;
-  }
-  .btn:active{background:rgba(255,255,255,.34)}
-  .empty{visibility:hidden}
-  @media (hover:hover) and (pointer:fine){
-    #pad{opacity:.22}
-  }
+html,body{margin:0;height:100%;background:#1f2d20;overflow:hidden;font-family:system-ui,-apple-system,sans-serif}body{display:grid;place-items:center;touch-action:none}#wrap{position:relative;width:min(100vw,960px);aspect-ratio:16/9;max-height:100vh}canvas{width:100%;height:100%;image-rendering:pixelated;background:#7db85b;box-shadow:0 18px 60px #0006}#hint{position:absolute;left:10px;top:8px;color:#fff9;font-size:11px;text-shadow:0 1px 2px #0008;pointer-events:none}#hud{position:absolute;right:8px;top:8px;color:#fff;background:#263b2dbb;padding:5px 7px;border-radius:8px;font-size:11px;display:flex;gap:7px;align-items:center}.bar{width:62px;height:7px;background:#0005;border:1px solid #fff5}.fill{height:100%;background:#ffd66b}#mute{border:0;background:#ffffff20;color:#fff;border-radius:5px;padding:2px 6px}#pad{position:absolute;left:12px;bottom:12px;width:108px;height:108px;display:grid;grid-template-columns:repeat(3,1fr);grid-template-rows:repeat(3,1fr);gap:4px;opacity:.64}.btn,#act{border:0;border-radius:10px;background:#ffffff28;color:white;font-size:17px;user-select:none;-webkit-user-select:none}.btn:active,#act:active{background:#ffffff55}.empty{visibility:hidden}#act{position:absolute;right:18px;bottom:26px;width:58px;height:58px;border-radius:50%;font-size:12px}@media(hover:hover) and (pointer:fine){#pad,#act{opacity:.28}}
 </style>
-</head>
-<body>
-<div id="wrap">
-  <canvas id="game" width="320" height="180"></canvas>
-  <div id="hint">矢印 / WASD / 左下パッドで移動</div>
-  <div id="pad" aria-label="movement controls">
-    <div class="empty"></div><button class="btn" data-k="up">▲</button><div class="empty"></div>
-    <button class="btn" data-k="left">◀</button><div class="empty"></div><button class="btn" data-k="right">▶</button>
-    <div class="empty"></div><button class="btn" data-k="down">▼</button><div class="empty"></div>
-  </div>
-</div>
-
-<script>
-const canvas = document.getElementById("game");
-const ctx = canvas.getContext("2d");
-ctx.imageSmoothingEnabled = false;
-
-const W = canvas.width, H = canvas.height;
-const WORLD_W = 1400, WORLD_H = 900;
-const TILE = 16;
-
-const keys = {up:false,down:false,left:false,right:false};
-const keyMap = {
-  ArrowUp:"up", KeyW:"up",
-  ArrowDown:"down", KeyS:"down",
-  ArrowLeft:"left", KeyA:"left",
-  ArrowRight:"right", KeyD:"right"
-};
-
-addEventListener("keydown", e=>{
-  const k = keyMap[e.code];
-  if(k){ keys[k]=true; e.preventDefault(); }
-});
-addEventListener("keyup", e=>{
-  const k = keyMap[e.code];
-  if(k){ keys[k]=false; e.preventDefault(); }
-});
-
-document.querySelectorAll(".btn").forEach(btn=>{
-  const k = btn.dataset.k;
-  const on = e=>{ keys[k]=true; e.preventDefault(); };
-  const off = e=>{ keys[k]=false; e.preventDefault(); };
-  btn.addEventListener("pointerdown", on);
-  btn.addEventListener("pointerup", off);
-  btn.addEventListener("pointercancel", off);
-  btn.addEventListener("pointerleave", off);
-});
-
-function hash(x,y){
-  let n = x*374761393 + y*668265263;
-  n = (n ^ (n >> 13)) * 1274126177;
-  return (n ^ (n >> 16)) >>> 0;
-}
-function rand2(x,y){ return (hash(x,y)%10000)/10000; }
-
-const rabbit = {
-  x: WORLD_W/2,
-  y: WORLD_H/2,
-  vx:0, vy:0,
-  speed:44,
-  dir:"down",
-  walkT:0,
-  idle:0,
-  earT:0
-};
-const cam = {x:rabbit.x-W/2, y:rabbit.y-H/2};
-const bentGrass = new Map();
-
-function clamp(v,a,b){ return Math.max(a,Math.min(b,v)); }
-function px(x,y,w=1,h=1,c="#fff"){
-  ctx.fillStyle=c;
-  ctx.fillRect(Math.round(x),Math.round(y),w,h);
-}
-
-function drawGround(){
-  const sx = Math.floor(cam.x/TILE)-1;
-  const sy = Math.floor(cam.y/TILE)-1;
-  const ex = Math.ceil((cam.x+W)/TILE)+1;
-  const ey = Math.ceil((cam.y+H)/TILE)+1;
-
-  ctx.fillStyle="#7fb85c";
-  ctx.fillRect(0,0,W,H);
-
-  for(let ty=sy; ty<=ey; ty++){
-    for(let tx=sx; tx<=ex; tx++){
-      const wx = tx*TILE, wy = ty*TILE;
-      const x = Math.floor(wx-cam.x), y = Math.floor(wy-cam.y);
-      const r = rand2(tx,ty);
-
-      if(r < .55){
-        px(x+3+(hash(tx,ty)%8), y+8, 1, 4, "#5c9848");
-        px(x+5+(hash(tx+3,ty)%5), y+10, 1, 3, "#6aa54f");
-      }
-      if(r > .87){
-        px(x+7,y+6,1,1,"#f6e9a3");
-        px(x+6,y+7,3,1,"#f2d9d0");
-        px(x+7,y+8,1,1,"#f6e9a3");
-      } else if(r > .80){
-        px(x+11,y+11,2,1,"#bcd9ff");
-        px(x+12,y+10,1,3,"#e9f0ff");
-      }
-
-      const key = tx+","+ty;
-      const bend = bentGrass.get(key);
-      if(bend){
-        const age = performance.now()-bend;
-        if(age < 650){
-          const q = 1-age/650;
-          px(x+8, y+11, 3, 1, "#4d8a3d");
-          px(x+9, y+10, 3, 1, q>.4 ? "#5a9846" : "#6aa54f");
-        } else bentGrass.delete(key);
-      }
-    }
-  }
-
-  for(let i=0;i<26;i++){
-    const wx = (i*173)%WORLD_W;
-    const wy = (i*281)%WORLD_H;
-    const dx = wx-cam.x, dy = wy-cam.y;
-    if(dx>-20&&dy>-20&&dx<W+20&&dy<H+20){
-      ctx.fillStyle="rgba(111,135,75,.28)";
-      ctx.fillRect(Math.round(dx),Math.round(dy),8+(i%3)*5,3+(i%2)*2);
-    }
-  }
-}
-
-function drawRabbit(x,y,dir,walking,earKick){
-  ctx.save();
-  ctx.translate(Math.round(x),Math.round(y));
-
-  const hop = walking ? (Math.sin(rabbit.walkT*10)>0 ? 0 : 1) : 0;
-  ctx.translate(0,-hop);
-
-  ctx.fillStyle="rgba(49,72,42,.28)";
-  ctx.fillRect(-7,8,14,3);
-  ctx.fillRect(-5,7,10,1);
-
-  const fur="#f1e7d8", shade="#d8c9b7", pink="#d99ea8", dark="#4a403a";
-
-  let e1=-4, e2=3;
-  if(earKick) e2=1;
-  px(e1,-14,3,8,fur); px(e1+1,-13,1,5,pink);
-  px(e2,-15,3,9,fur); px(e2+1,-14,1,6,pink);
-
-  px(-6,-1,12,9,fur);
-  px(-5,5,10,4,fur);
-  px(-7,1,2,5,shade);
-  px(5,2,2,5,shade);
-
-  px(-6,-8,12,10,fur);
-  px(-5,-9,10,2,fur);
-  px(-7,-6,2,6,fur);
-  px(5,-6,2,6,fur);
-
-  const step = walking ? (Math.floor(rabbit.walkT*8)%2) : 0;
-  if(step===0){
-    px(-6,8,5,2,shade); px(2,8,5,2,shade);
-  }else{
-    px(-7,8,5,2,shade); px(3,8,5,2,shade);
-  }
-
-  if(dir==="down"){
-    px(-3,-5,1,1,dark); px(3,-5,1,1,dark);
-    px(0,-2,1,1,pink);
-    px(-1,0,1,1,dark); px(1,0,1,1,dark);
-  }else if(dir==="up"){
-    px(-4,-6,2,1,shade); px(3,-6,2,1,shade);
-  }else if(dir==="left"){
-    px(-5,-5,1,1,dark); px(-6,-2,1,1,pink);
-    px(4,4,2,2,fur);
-  }else{
-    px(5,-5,1,1,dark); px(6,-2,1,1,pink);
-    px(-6,4,2,2,fur);
-  }
-  ctx.restore();
-}
-
-function update(dt){
-  let dx=(keys.right?1:0)-(keys.left?1:0);
-  let dy=(keys.down?1:0)-(keys.up?1:0);
-  const moving = dx!==0 || dy!==0;
-
-  if(moving){
-    const len=Math.hypot(dx,dy)||1;
-    dx/=len; dy/=len;
-    rabbit.x += dx*rabbit.speed*dt;
-    rabbit.y += dy*rabbit.speed*dt;
-    rabbit.walkT += dt;
-    rabbit.idle=0;
-
-    if(Math.abs(dx)>Math.abs(dy)) rabbit.dir=dx<0?"left":"right";
-    else rabbit.dir=dy<0?"up":"down";
-
-    const tx=Math.floor(rabbit.x/TILE), ty=Math.floor((rabbit.y+7)/TILE);
-    bentGrass.set(tx+","+ty, performance.now());
-  }else{
-    rabbit.idle += dt;
-    if(rabbit.idle>3.5){
-      rabbit.earT += dt;
-      if(rabbit.earT>2.2) rabbit.earT=0;
-    }else rabbit.earT=0;
-  }
-
-  rabbit.x=clamp(rabbit.x,10,WORLD_W-10);
-  rabbit.y=clamp(rabbit.y,16,WORLD_H-10);
-
-  const tx=rabbit.x-W/2, ty=rabbit.y-H/2;
-  cam.x += (tx-cam.x)*Math.min(1,dt*4.5);
-  cam.y += (ty-cam.y)*Math.min(1,dt*4.5);
-  cam.x=clamp(cam.x,0,WORLD_W-W);
-  cam.y=clamp(cam.y,0,WORLD_H-H);
-}
-
-function draw(){
-  drawGround();
-
-  for(let i=0;i<18;i++){
-    const wx=(90+i*263)%WORLD_W;
-    const wy=(140+i*197)%WORLD_H;
-    const x=wx-cam.x,y=wy-cam.y;
-    if(x>-10&&y>-10&&x<W+10&&y<H+10){
-      px(x,y,5,2,"#7e8c71");
-      px(x+1,y-1,3,1,"#a7b09b");
-    }
-  }
-
-  const sx=rabbit.x-cam.x, sy=rabbit.y-cam.y;
-  const walking=keys.up||keys.down||keys.left||keys.right;
-  const earKick=rabbit.idle>3.5 && rabbit.earT<.22;
-  drawRabbit(sx,sy,rabbit.dir,walking,earKick);
-
-  ctx.fillStyle="rgba(255,246,208,.04)";
-  ctx.fillRect(0,0,W,H);
-}
-
-let last=performance.now();
-function loop(now){
-  const dt=Math.min(.033,(now-last)/1000);
-  last=now;
-  update(dt);
-  draw();
-  requestAnimationFrame(loop);
-}
-requestAnimationFrame(loop);
-</script>
-</body>
-</html>
+</head><body><div id="wrap">
+<canvas id="game" width="320" height="180"></canvas>
+<div id="hint">矢印 / WASD　SPACE＝食べる　音は最初の操作でON</div>
+<div id="hud">おなか <div class="bar"><div id="hunger" class="fill"></div></div><button id="mute">♪</button></div>
+<div id="pad"><div class="empty"></div><button class="btn" data-k="up">▲</button><div class="empty"></div><button class="btn" data-k="left">◀</button><div class="empty"></div><button class="btn" data-k="right">▶</button><div class="empty"></div><button class="btn" data-k="down">▼</button><div class="empty"></div></div>
+<button id="act">たべる</button>
+</div><script>
+const c=document.getElementById('game'),ctx=c.getContext('2d');ctx.imageSmoothingEnabled=false;const W=320,H=180,WW=1200,WH=820,T=16;
+const keys={up:0,down:0,left:0,right:0};const map={ArrowUp:'up',KeyW:'up',ArrowDown:'down',KeyS:'down',ArrowLeft:'left',KeyA:'left',ArrowRight:'right',KeyD:'right'};
+let muted=false,audio=null,bgmTimer=null,lastStep=0;
+function ensureAudio(){if(!audio){audio=new (window.AudioContext||window.webkitAudioContext)();startBgm()}if(audio.state==='suspended')audio.resume()}
+function beep(freq=440,d=.05,type='square',vol=.035){if(muted)return;ensureAudio();const o=audio.createOscillator(),g=audio.createGain();o.type=type;o.frequency.value=freq;g.gain.setValueAtTime(vol,audio.currentTime);g.gain.exponentialRampToValueAtTime(.0001,audio.currentTime+d);o.connect(g).connect(audio.destination);o.start();o.stop(audio.currentTime+d)}
+function startBgm(){let i=0;const notes=[523,659,784,659,587,698,880,698];bgmTimer=setInterval(()=>{if(!muted&&audio){beep(notes[i++%notes.length],.09,'square',.012)}},360)}
+document.getElementById('mute').onclick=()=>{muted=!muted;document.getElementById('mute').textContent=muted?'×':'♪';ensureAudio()};
+addEventListener('keydown',e=>{ensureAudio();if(map[e.code]){keys[map[e.code]]=1;e.preventDefault()}if(e.code==='Space'){eat();e.preventDefault()}});addEventListener('keyup',e=>{if(map[e.code])keys[map[e.code]]=0});
+document.querySelectorAll('.btn').forEach(b=>{let k=b.dataset.k;const on=e=>{ensureAudio();keys[k]=1;e.preventDefault()},off=e=>{keys[k]=0;e.preventDefault()};b.onpointerdown=on;b.onpointerup=b.onpointercancel=b.onpointerleave=off});document.getElementById('act').onpointerdown=e=>{ensureAudio();eat();e.preventDefault()};
+function hash(x,y){let n=x*374761393+y*668265263;n=(n^(n>>13))*1274126177;return(n^(n>>16))>>>0}function rnd(x,y){return(hash(x,y)%10000)/10000}function clamp(v,a,b){return Math.max(a,Math.min(b,v))}function px(x,y,w=1,h=1,col='#fff'){ctx.fillStyle=col;ctx.fillRect(Math.round(x),Math.round(y),w,h)}
+const rabbit={x:600,y:430,speed:46,dir:'down',walk:0,idle:0,hunger:82,bubble:0};const cam={x:rabbit.x-W/2,y:rabbit.y-H/2};
+const trees=[{x:190,y:160},{x:245,y:225},{x:965,y:170},{x:1035,y:255},{x:170,y:650},{x:900,y:640},{x:1080,y:690},{x:420,y:120}];
+const rocks=[{x:360,y:260},{x:810,y:300},{x:690,y:650},{x:290,y:560},{x:1010,y:500}];
+const house={x:510,y:175,w:130,h:92};
+const foods=[{x:430,y:420,eaten:false},{x:770,y:455,eaten:false},{x:855,y:590,eaten:false},{x:325,y:690,eaten:false},{x:690,y:325,eaten:false}];
+function collides(x,y){if(x>house.x-6&&x<house.x+house.w+6&&y>house.y+34&&y<house.y+house.h+8)return true;for(const t of trees)if(Math.hypot(x-t.x,y-(t.y+11))<15)return true;for(const r of rocks)if(Math.hypot(x-r.x,y-r.y)<12)return true;return false}
+function nearestFood(){let best=null,bd=999;for(const f of foods)if(!f.eaten){let d=Math.hypot(rabbit.x-f.x,rabbit.y-f.y);if(d<bd){bd=d;best=f}}return{f:best,d:bd}}
+function eat(){const n=nearestFood();if(n.f&&n.d<30&&!n.f.eaten){n.f.eaten=true;rabbit.hunger=Math.min(100,rabbit.hunger+48);rabbit.bubble=2.2;beep(880,.07,'square',.05);setTimeout(()=>beep(1175,.09,'square',.04),70)}else{beep(180,.06,'square',.02)}}
+function ground(){ctx.fillStyle='#7eb95d';ctx.fillRect(0,0,W,H);let sx=Math.floor(cam.x/T)-1,sy=Math.floor(cam.y/T)-1,ex=Math.ceil((cam.x+W)/T)+1,ey=Math.ceil((cam.y+H)/T)+1;for(let ty=sy;ty<=ey;ty++)for(let tx=sx;tx<=ex;tx++){let x=tx*T-cam.x,y=ty*T-cam.y,r=rnd(tx,ty);if(r<.58){px(x+3+(hash(tx,ty)%8),y+8,1,4,'#5b9846');px(x+6,y+10,1,3,'#6aa650')}if(r>.88){px(x+7,y+6,1,1,'#ffe89d');px(x+6,y+7,3,1,'#f4d3d3')}if(r>.79&&r<.84){px(x+11,y+10,1,3,'#f4f7ff');px(x+10,y+11,3,1,'#c8dcff')}}}
+function tree(t){let x=t.x-cam.x,y=t.y-cam.y;px(x-4,y+9,8,22,'#795236');px(x-18,y-10,36,26,'#417b43');px(x-12,y-18,26,18,'#4e8c4d');px(x-22,y,18,18,'#3f7540');px(x+7,y-2,17,19,'#4b8448');px(x-8,y-8,4,3,'#78a85d')}
+function rock(r){let x=r.x-cam.x,y=r.y-cam.y;px(x-9,y-5,18,10,'#778178');px(x-6,y-8,11,3,'#9ca39a');px(x-7,y+5,14,2,'#5f6d64')}
+function drawHouse(){let x=house.x-cam.x,y=house.y-cam.y;px(x,y+24,house.w,68,'#d8c08d');px(x+8,y+35,114,51,'#ead8aa');px(x-8,y+15,146,14,'#8a5640');px(x+5,y+5,120,16,'#a7634a');px(x+51,y+52,28,34,'#78543d');px(x+17,y+45,24,20,'#98c5d4');px(x+93,y+45,24,20,'#98c5d4');px(x+63,y+66,4,4,'#d4b057')}
+function food(f){if(f.eaten)return;let x=f.x-cam.x,y=f.y-cam.y;px(x,y-8,2,6,'#3f833f');px(x+2,y-7,3,2,'#519c4d');px(x-2,y-7,3,2,'#519c4d');px(x-2,y-2,6,10,'#e67b3d');px(x-1,y+8,4,2,'#c55d32')}
+function bunny(){let x=rabbit.x-cam.x,y=rabbit.y-cam.y,move=keys.up||keys.down||keys.left||keys.right,hop=move&&Math.sin(rabbit.walk*11)>0?0:1;ctx.save();ctx.translate(Math.round(x),Math.round(y-hop));ctx.fillStyle='#32452e55';ctx.fillRect(-7,8,14,3);let fur='#f2e8da',sh='#d9cbbb',pk='#db9da9',dk='#4b403b';px(-4,-14,3,8,fur);px(-3,-13,1,5,pk);px(3,-15,3,9,fur);px(4,-14,1,6,pk);px(-6,-8,12,10,fur);px(-7,-6,2,6,fur);px(5,-6,2,6,fur);px(-6,-1,12,9,fur);px(-5,5,10,4,fur);px(-6,8,5,2,sh);px(2,8,5,2,sh);if(rabbit.dir==='down'){px(-3,-5,1,1,dk);px(3,-5,1,1,dk);px(0,-2,1,1,pk)}else if(rabbit.dir==='left'){px(-5,-5,1,1,dk);px(4,4,2,2,fur)}else if(rabbit.dir==='right'){px(5,-5,1,1,dk);px(-6,4,2,2,fur)}ctx.restore();drawBubble(x,y)}
+function drawBubble(x,y){let hungry=rabbit.hunger<35;if(!hungry&&rabbit.bubble<=0)return;let text=hungry?'おなかすいた… 🥕':'おいしい！';ctx.save();ctx.font='9px system-ui';let tw=ctx.measureText(text).width+12,bx=clamp(x-tw/2,3,W-tw-3),by=y-39;ctx.fillStyle='#fff';ctx.fillRect(bx,by,tw,18);ctx.fillStyle='#fff';ctx.fillRect(x-2,by+17,6,5);ctx.fillStyle='#3d443e';ctx.fillText(text,bx+6,by+12);ctx.restore()}
+function update(dt){rabbit.hunger=Math.max(0,rabbit.hunger-dt*.75);rabbit.bubble=Math.max(0,rabbit.bubble-dt);document.getElementById('hunger').style.width=rabbit.hunger+'%';let dx=(keys.right?1:0)-(keys.left?1:0),dy=(keys.down?1:0)-(keys.up?1:0),moving=dx||dy;if(moving){let l=Math.hypot(dx,dy);dx/=l;dy/=l;let nx=rabbit.x+dx*rabbit.speed*dt,ny=rabbit.y+dy*rabbit.speed*dt;if(!collides(nx,rabbit.y))rabbit.x=nx;if(!collides(rabbit.x,ny))rabbit.y=ny;rabbit.walk+=dt;rabbit.idle=0;if(Math.abs(dx)>Math.abs(dy))rabbit.dir=dx<0?'left':'right';else rabbit.dir=dy<0?'up':'down';if(performance.now()-lastStep>235){lastStep=performance.now();beep(260+((Math.floor(rabbit.walk*8)%2)*45),.025,'square',.012)}}else rabbit.idle+=dt;rabbit.x=clamp(rabbit.x,10,WW-10);rabbit.y=clamp(rabbit.y,16,WH-10);let tx=rabbit.x-W/2,ty=rabbit.y-H/2;cam.x+=(tx-cam.x)*Math.min(1,dt*4.5);cam.y+=(ty-cam.y)*Math.min(1,dt*4.5);cam.x=clamp(cam.x,0,WW-W);cam.y=clamp(cam.y,0,WH-H)}
+function draw(){ground();drawHouse();for(const t of trees)tree(t);for(const r of rocks)rock(r);for(const f of foods)food(f);bunny();ctx.fillStyle='#fff5db0b';ctx.fillRect(0,0,W,H)}
+let last=performance.now();function loop(now){let dt=Math.min(.033,(now-last)/1000);last=now;update(dt);draw();requestAnimationFrame(loop)}requestAnimationFrame(loop);
+</script></body></html>
